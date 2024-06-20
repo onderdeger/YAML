@@ -1,0 +1,98 @@
+name: $(BuildDefinitionName)_$(date:yyyyMMdd)$(rev:.r)
+
+trigger:
+  - none
+
+pool:
+  name: ...
+
+variables:
+ backendAzureRmResourceGroupName: ...
+ backendAzureRmStorageAccountName: ... 
+ backendAzureRmContainerName: ...
+ backendAzureRmKey: ...
+ serviceconnectionname: ...
+ terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/...'
+
+resources:
+  repositories:
+  - repository: self
+    type: git
+    ref: refs/heads/main
+
+stages:
+ - stage: static_code_analysis_test
+   jobs:
+     - job: static_code_analysis_test
+       steps:
+       - task: trivy@1
+         inputs:
+           debug: true
+           version: v1.28.1
+           dir: $(terraformWorkingDirectory)
+           publishTestResults: true
+           args: --soft-fail
+
+ - stage: terraform_plan
+   jobs:
+     - job: terraform_plan
+       steps:
+       - checkout: self
+       - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@1
+         displayName: Install Terraform latest
+
+       - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV4@4
+         displayName: 'Terraform : init'
+         inputs:
+           workingDirectory: $(terraformWorkingDirectory)
+           backendServiceArm: $(serviceconnectionname)
+           backendAzureRmResourceGroupName: $(backendAzureRmResourceGroupName)
+           backendAzureRmStorageAccountName: $(backendAzureRmStorageAccountName)
+           backendAzureRmContainerName: $(backendAzureRmContainerName)
+           backendAzureRmKey: $(backendAzureRmKey)
+
+       - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV4@4
+         displayName: 'Terraform : validate'
+         inputs:
+          command: validate
+          workingDirectory: $(terraformWorkingDirectory)
+
+       - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV4@4
+         displayName: 'Terraform : plan'
+         inputs:
+          command: plan
+          workingDirectory: $(terraformWorkingDirectory)
+          environmentServiceNameAzureRM: $(serviceconnectionname)
+
+ - stage: terraform_apply
+   dependsOn: [terraform_plan]
+   condition: succeeded('terraform_plan')
+   jobs:
+     - deployment: terraform_apply
+       continueOnError: false
+       environment: '...'
+       timeoutInMinutes: 120
+       strategy:
+        runOnce:
+         deploy:
+           steps:
+             - checkout: self
+             - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@1
+               displayName: Install Terraform latest
+
+             - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV4@4
+               displayName: 'Terraform : init'
+               inputs:
+                workingDirectory: $(terraformWorkingDirectory)
+                backendServiceArm: $(serviceconnectionname)
+                backendAzureRmResourceGroupName: $(backendAzureRmResourceGroupName)
+                backendAzureRmStorageAccountName: $(backendAzureRmStorageAccountName)
+                backendAzureRmContainerName: $(backendAzureRmContainerName)
+                backendAzureRmKey: $(backendAzureRmKey)
+
+             - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV4@4
+               displayName: 'Terraform : apply'
+               inputs:
+                command: apply
+                workingDirectory: $(terraformWorkingDirectory)
+                environmentServiceNameAzureRM: $(serviceconnectionname)
